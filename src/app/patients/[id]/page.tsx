@@ -20,9 +20,13 @@ import {
   TrendingUp, 
   AlertCircle,
   CheckCircle2,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  UtensilsCrossed
 } from "lucide-react"
 import { toast } from "sonner"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 interface Patient {
   id: number
@@ -53,6 +57,9 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
   const [patient, setPatient] = useState<Patient | null>(null)
   const [loading, setLoading] = useState(true)
   const [complianceData, setComplianceData] = useState<any>(null)
+  const [expandedChartId, setExpandedChartId] = useState<number | null>(null)
+  const [chartMeals, setChartMeals] = useState<Record<number, any[]>>({})
+  const [loadingMeals, setLoadingMeals] = useState<Record<number, boolean>>({})
 
   useEffect(() => {
     fetchPatientData()
@@ -83,6 +90,43 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
     } catch (error) {
       console.error("Error fetching compliance:", error)
     }
+  }
+
+  const fetchChartMeals = async (chartId: number) => {
+    if (chartMeals[chartId]) {
+      // Already fetched
+      setExpandedChartId(expandedChartId === chartId ? null : chartId)
+      return
+    }
+
+    try {
+      setLoadingMeals(prev => ({ ...prev, [chartId]: true }))
+      const response = await fetch(`/api/diet-charts/${chartId}`)
+      if (!response.ok) throw new Error("Failed to fetch meals")
+      const data = await response.json()
+      setChartMeals(prev => ({ ...prev, [chartId]: data.meals || [] }))
+      setExpandedChartId(chartId)
+    } catch (error) {
+      console.error("Error fetching chart meals:", error)
+      toast.error("Failed to load meal details")
+    } finally {
+      setLoadingMeals(prev => ({ ...prev, [chartId]: false }))
+    }
+  }
+
+  const calculateMealTotals = (meals: any[]) => {
+    const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 }
+    meals.forEach(meal => {
+      if (meal.foods) {
+        meal.foods.forEach((food: any) => {
+          totals.calories += food.calories || 0
+          totals.protein += food.protein || 0
+          totals.carbs += food.carbs || 0
+          totals.fat += food.fat || 0
+        })
+      }
+    })
+    return totals
   }
 
   if (loading) {
@@ -346,44 +390,165 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
                 {patient.diet_charts && patient.diet_charts.length > 0 ? (
                   <div className="grid gap-4">
                     {patient.diet_charts.map((chart: any) => (
-                      <Card key={chart.id} className="hover:shadow-md transition-shadow cursor-pointer">
+                      <Card key={chart.id} className="hover:shadow-md transition-shadow">
                         <CardContent className="pt-6">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-2 flex-1">
-                              <div className="flex items-center gap-3">
-                                <Badge variant={chart.status === "Active" ? "default" : "secondary"}>
-                                  {chart.status}
-                                </Badge>
-                                <span className="text-sm text-muted-foreground">
-                                  {chart.dietary_focus && `Focus: ${chart.dietary_focus}`}
-                                </span>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">Duration:</span>
-                                  <span className="ml-2 font-medium">{chart.duration} days</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Target:</span>
-                                  <span className="ml-2 font-medium">{chart.target_calories} cal</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Dosha Score:</span>
-                                  <span className="ml-2 font-medium">{chart.dosha_balance_score || "N/A"}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Created:</span>
-                                  <span className="ml-2 font-medium">
-                                    {new Date(chart.created_at).toLocaleDateString()}
+                          <div className="space-y-4">
+                            {/* Chart Summary Header */}
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-2 flex-1">
+                                <div className="flex items-center gap-3">
+                                  <Badge variant={chart.status === "Active" ? "default" : "secondary"}>
+                                    {chart.status}
+                                  </Badge>
+                                  <span className="text-sm text-muted-foreground">
+                                    {chart.dietary_focus && `Focus: ${chart.dietary_focus.replace("-", " ")}`}
                                   </span>
                                 </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                  <div>
+                                    <span className="text-muted-foreground">Duration:</span>
+                                    <span className="ml-2 font-medium">{chart.duration} days</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Target:</span>
+                                    <span className="ml-2 font-medium">{chart.target_calories} cal</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Dosha Score:</span>
+                                    <span className="ml-2 font-medium">{chart.dosha_balance_score || "N/A"}%</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">Created:</span>
+                                    <span className="ml-2 font-medium">
+                                      {new Date(chart.created_at).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                </div>
+                                {chart.special_instructions && (
+                                  <p className="text-sm text-muted-foreground pt-2 border-t">
+                                    {chart.special_instructions}
+                                  </p>
+                                )}
                               </div>
-                              {chart.special_instructions && (
-                                <p className="text-sm text-muted-foreground pt-2 border-t">
-                                  {chart.special_instructions}
-                                </p>
-                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => fetchChartMeals(chart.id)}
+                                disabled={loadingMeals[chart.id]}
+                              >
+                                {loadingMeals[chart.id] ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : expandedChartId === chart.id ? (
+                                  <>
+                                    <ChevronUp className="w-4 h-4 mr-2" />
+                                    Hide Meals
+                                  </>
+                                ) : (
+                                  <>
+                                    <ChevronDown className="w-4 h-4 mr-2" />
+                                    View Meals
+                                  </>
+                                )}
+                              </Button>
                             </div>
+
+                            {/* Expanded Meal Details */}
+                            {expandedChartId === chart.id && chartMeals[chart.id] && (
+                              <div className="space-y-4 pt-4 border-t">
+                                {/* Nutritional Summary */}
+                                {chartMeals[chart.id].length > 0 && (
+                                  <div className="grid grid-cols-4 gap-3">
+                                    {(() => {
+                                      const totals = calculateMealTotals(chartMeals[chart.id])
+                                      return (
+                                        <>
+                                          <Card className="bg-muted/50">
+                                            <CardContent className="pt-4 pb-3">
+                                              <div className="text-xs text-muted-foreground">Total Calories</div>
+                                              <div className="text-xl font-bold">{Math.round(totals.calories)}</div>
+                                              <Progress 
+                                                value={(totals.calories / chart.target_calories) * 100} 
+                                                className="h-1 mt-2" 
+                                              />
+                                            </CardContent>
+                                          </Card>
+                                          <Card className="bg-muted/50">
+                                            <CardContent className="pt-4 pb-3">
+                                              <div className="text-xs text-muted-foreground">Protein</div>
+                                              <div className="text-xl font-bold">{Math.round(totals.protein)}g</div>
+                                            </CardContent>
+                                          </Card>
+                                          <Card className="bg-muted/50">
+                                            <CardContent className="pt-4 pb-3">
+                                              <div className="text-xs text-muted-foreground">Carbs</div>
+                                              <div className="text-xl font-bold">{Math.round(totals.carbs)}g</div>
+                                            </CardContent>
+                                          </Card>
+                                          <Card className="bg-muted/50">
+                                            <CardContent className="pt-4 pb-3">
+                                              <div className="text-xs text-muted-foreground">Fat</div>
+                                              <div className="text-xl font-bold">{Math.round(totals.fat)}g</div>
+                                            </CardContent>
+                                          </Card>
+                                        </>
+                                      )
+                                    })()}
+                                  </div>
+                                )}
+
+                                {/* Meal Breakdown */}
+                                <div className="space-y-4">
+                                  {chartMeals[chart.id].map((meal: any) => (
+                                    <Card key={meal.id} className="bg-gradient-to-br from-[var(--ayurveda-saffron)]/5 to-[var(--ayurveda-terracotta)]/5">
+                                      <CardHeader className="pb-3">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2">
+                                            <UtensilsCrossed className="w-4 h-4 text-[var(--ayurveda-saffron)]" />
+                                            <CardTitle className="text-base">{meal.meal_type}</CardTitle>
+                                          </div>
+                                          <div className="flex items-center gap-4 text-sm">
+                                            <span className="text-muted-foreground">{meal.timing}</span>
+                                            <Badge variant="outline">{meal.total_calories || 0} cal</Badge>
+                                          </div>
+                                        </div>
+                                      </CardHeader>
+                                      <CardContent>
+                                        {meal.foods && meal.foods.length > 0 ? (
+                                          <Table>
+                                            <TableHeader>
+                                              <TableRow>
+                                                <TableHead>Food Item</TableHead>
+                                                <TableHead>Quantity</TableHead>
+                                                <TableHead className="text-right">Calories</TableHead>
+                                                <TableHead className="text-right">Protein</TableHead>
+                                                <TableHead className="text-right">Carbs</TableHead>
+                                                <TableHead className="text-right">Fat</TableHead>
+                                              </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                              {meal.foods.map((food: any) => (
+                                                <TableRow key={food.id}>
+                                                  <TableCell className="font-medium">{food.food_name}</TableCell>
+                                                  <TableCell>{food.quantity} {food.unit}</TableCell>
+                                                  <TableCell className="text-right">{Math.round(food.calories || 0)}</TableCell>
+                                                  <TableCell className="text-right">{Math.round(food.protein || 0)}g</TableCell>
+                                                  <TableCell className="text-right">{Math.round(food.carbs || 0)}g</TableCell>
+                                                  <TableCell className="text-right">{Math.round(food.fat || 0)}g</TableCell>
+                                                </TableRow>
+                                              ))}
+                                            </TableBody>
+                                          </Table>
+                                        ) : (
+                                          <p className="text-sm text-muted-foreground text-center py-4">
+                                            No food items in this meal
+                                          </p>
+                                        )}
+                                      </CardContent>
+                                    </Card>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </CardContent>
                       </Card>

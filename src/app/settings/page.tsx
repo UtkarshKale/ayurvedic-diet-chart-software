@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { AppSidebar } from "@/components/AppSidebar"
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,9 +10,62 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { User, Bell, Shield, Palette, Save } from "lucide-react"
+import { User, Bell, Shield, Palette, Save, Loader2 } from "lucide-react"
+import { toast } from "sonner"
 
 export default function SettingsPage() {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [profile, setProfile] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    specialization: "",
+    clinic_name: "",
+  })
+
+  useEffect(() => {
+    fetchProfile()
+  }, [])
+
+  const fetchProfile = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch("/api/profile")
+      if (!response.ok) throw new Error("Failed to fetch profile")
+      const data = await response.json()
+      setProfile(data)
+    } catch (error) {
+      console.error("Error fetching profile:", error)
+      toast.error("Failed to load profile")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSaveProfile = async () => {
+    try {
+      setSaving(true)
+      const response = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profile),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to update profile")
+      }
+
+      toast.success("Profile updated successfully!")
+    } catch (error: any) {
+      console.error("Error updating profile:", error)
+      toast.error(error.message || "Failed to update profile")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full">
@@ -55,36 +109,83 @@ export default function SettingsPage() {
                     <CardDescription>Update your professional details</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="first-name">First Name</Label>
-                        <Input id="first-name" defaultValue="Dr. Ayurveda" />
+                    {loading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="last-name">Last Name</Label>
-                        <Input id="last-name" defaultValue="Practitioner" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input id="email" type="email" defaultValue="doctor@ayurdiet.com" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Phone Number</Label>
-                      <Input id="phone" type="tel" defaultValue="+91 98765 43210" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="specialization">Specialization</Label>
-                      <Input id="specialization" defaultValue="Ayurvedic Dietitian & Nutrition" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="clinic">Clinic/Hospital Name</Label>
-                      <Input id="clinic" defaultValue="Holistic Wellness Center" />
-                    </div>
-                    <Button className="bg-gradient-to-r from-[var(--ayurveda-saffron)] to-[var(--ayurveda-terracotta)] text-white">
-                      <Save className="w-4 h-4 mr-2" />
-                      Save Changes
-                    </Button>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="first-name">First Name</Label>
+                            <Input 
+                              id="first-name" 
+                              value={profile.first_name} 
+                              onChange={(e) => setProfile({ ...profile, first_name: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="last-name">Last Name</Label>
+                            <Input 
+                              id="last-name" 
+                              value={profile.last_name}
+                              onChange={(e) => setProfile({ ...profile, last_name: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="email">Email</Label>
+                          <Input 
+                            id="email" 
+                            type="email" 
+                            value={profile.email}
+                            onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="phone">Phone Number</Label>
+                          <Input 
+                            id="phone" 
+                            type="tel" 
+                            value={profile.phone}
+                            onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="specialization">Specialization</Label>
+                          <Input 
+                            id="specialization" 
+                            value={profile.specialization}
+                            onChange={(e) => setProfile({ ...profile, specialization: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="clinic">Clinic/Hospital Name</Label>
+                          <Input 
+                            id="clinic" 
+                            value={profile.clinic_name}
+                            onChange={(e) => setProfile({ ...profile, clinic_name: e.target.value })}
+                          />
+                        </div>
+                        <Button 
+                          className="bg-gradient-to-r from-[var(--ayurveda-saffron)] to-[var(--ayurveda-terracotta)] text-white"
+                          onClick={handleSaveProfile}
+                          disabled={saving}
+                        >
+                          {saving ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="w-4 h-4 mr-2" />
+                              Save Changes
+                            </>
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,8 +11,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
-import { Search, Plus, X, AlertCircle, CheckCircle2, TrendingUp, Leaf } from "lucide-react"
+import { Search, Plus, X, AlertCircle, CheckCircle2, TrendingUp, Leaf, Loader2 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
+import { toast } from "sonner"
 
 interface Food {
   id: string
@@ -69,17 +70,21 @@ const SAMPLE_FOODS: Food[] = [
   { id: "15", name: "Sweet Potato", category: "Vegetables", calories: 86, protein: 2, carbs: 20, fat: 0.1, thermal: "Warm", digestibility: "Easy", rasa: ["Sweet"], dosha: ["Vata"] },
 ]
 
-const PATIENTS = [
-  { id: "1", name: "Priya Sharma", age: 32, dosha: "Vata", allergies: "None", dietaryPreference: "Vegetarian" },
-  { id: "2", name: "Rahul Patel", age: 45, dosha: "Pitta", allergies: "Dairy", dietaryPreference: "Vegetarian" },
-  { id: "3", name: "Ananya Kumar", age: 28, dosha: "Kapha", allergies: "None", dietaryPreference: "Vegan" },
-  { id: "4", name: "Vikram Singh", age: 55, dosha: "Vata-Pitta", allergies: "Nuts", dietaryPreference: "Non-Vegetarian" },
-]
-
-export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function CreateDietChart({ 
+  open, 
+  onOpenChange,
+  onSuccess 
+}: { 
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+}) {
   const [step, setStep] = useState(1)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedMeal, setSelectedMeal] = useState<keyof DietChartData["meals"]>("breakfast")
+  const [patients, setPatients] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   
   const [chartData, setChartData] = useState<DietChartData>({
     patientId: "",
@@ -98,7 +103,28 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
     notes: "",
   })
 
-  const selectedPatient = PATIENTS.find(p => p.id === chartData.patientId)
+  useEffect(() => {
+    if (open) {
+      fetchPatients()
+    }
+  }, [open])
+
+  const fetchPatients = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch("/api/patients")
+      if (!response.ok) throw new Error("Failed to fetch patients")
+      const data = await response.json()
+      setPatients(data)
+    } catch (error) {
+      console.error("Error fetching patients:", error)
+      toast.error("Failed to load patients")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const selectedPatient = patients.find(p => p.id.toString() === chartData.patientId)
 
   const filteredFoods = SAMPLE_FOODS.filter(food =>
     food.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -203,33 +229,119 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
 
   const compliance = chartData.patientId ? checkAyurvedicCompliance() : null
 
-  const handleSave = () => {
-    console.log("Saving diet chart:", chartData)
-    // In a real app, this would save to database
-    onOpenChange(false)
-    // Reset form
-    setStep(1)
-    setChartData({
-      patientId: "",
-      patientName: "",
-      dosha: "",
-      duration: "7",
-      targetCalories: 1800,
-      dietaryFocus: "maintenance",
-      meals: {
-        breakfast: [],
-        midMorning: [],
-        lunch: [],
-        evening: [],
-        dinner: [],
-      },
-      notes: "",
-    })
+  const handleSave = async () => {
+    try {
+      setSaving(true)
+      
+      // Calculate total nutrition
+      const totals = calculateTotalNutrition()
+      const compliance = checkAyurvedicCompliance()
+
+      // Create diet chart
+      const dietChartResponse = await fetch("/api/diet-charts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: parseInt(chartData.patientId),
+          duration: parseInt(chartData.duration),
+          target_calories: chartData.targetCalories,
+          dietary_focus: chartData.dietaryFocus,
+          dosha_balance_score: compliance.doshaScore,
+          special_instructions: chartData.notes || undefined,
+        }),
+      })
+
+      if (!dietChartResponse.ok) {
+        throw new Error("Failed to create diet chart")
+      }
+
+      const dietChart = await dietChartResponse.json()
+
+      // Create meals for each meal type
+      const mealTypes = ["breakfast", "midMorning", "lunch", "evening", "dinner"] as const
+      const mealTimings = ["08:00", "10:30", "13:00", "16:00", "19:30"]
+
+      for (let i = 0; i < mealTypes.length; i++) {
+        const mealType = mealTypes[i]
+        const mealItems = chartData.meals[mealType]
+        
+        if (mealItems.length === 0) continue
+
+        const mealNutrition = calculateMealNutrition(mealItems)
+
+        // Create meal
+        const mealResponse = await fetch("/api/diet-charts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chart_id: dietChart.id,
+            meal_type: mealType.charAt(0).toUpperCase() + mealType.slice(1).replace(/([A-Z])/g, ' $1'),
+            timing: mealTimings[i],
+            total_calories: Math.round(mealNutrition.calories),
+          }),
+        })
+
+        if (!mealResponse.ok) {
+          throw new Error("Failed to create meal")
+        }
+
+        const meal = await mealResponse.json()
+
+        // Create meal foods
+        for (const item of mealItems) {
+          await fetch("/api/diet-charts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              meal_id: meal.id,
+              food_name: item.food.name,
+              quantity: item.quantity,
+              unit: item.unit,
+              calories: Math.round((item.food.calories * item.quantity) / 100),
+              protein: parseFloat(((item.food.protein * item.quantity) / 100).toFixed(1)),
+              carbs: parseFloat(((item.food.carbs * item.quantity) / 100).toFixed(1)),
+              fat: parseFloat(((item.food.fat * item.quantity) / 100).toFixed(1)),
+            }),
+          })
+        }
+      }
+
+      toast.success("Diet chart created successfully!")
+      onOpenChange(false)
+      
+      // Reset form
+      setStep(1)
+      setChartData({
+        patientId: "",
+        patientName: "",
+        dosha: "",
+        duration: "7",
+        targetCalories: 1800,
+        dietaryFocus: "maintenance",
+        meals: {
+          breakfast: [],
+          midMorning: [],
+          lunch: [],
+          evening: [],
+          dinner: [],
+        },
+        notes: "",
+      })
+      
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (error: any) {
+      console.error("Error saving diet chart:", error)
+      toast.error(error.message || "Failed to create diet chart")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Create New Diet Chart</DialogTitle>
           <DialogDescription>
@@ -243,29 +355,35 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
             <div className="space-y-6 py-4">
               <div className="space-y-2">
                 <Label htmlFor="patient">Select Patient *</Label>
-                <Select
-                  value={chartData.patientId}
-                  onValueChange={(value) => {
-                    const patient = PATIENTS.find(p => p.id === value)
-                    setChartData({
-                      ...chartData,
-                      patientId: value,
-                      patientName: patient?.name || "",
-                      dosha: patient?.dosha || "",
-                    })
-                  }}
-                >
-                  <SelectTrigger id="patient">
-                    <SelectValue placeholder="Choose a patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PATIENTS.map((patient) => (
-                      <SelectItem key={patient.id} value={patient.id}>
-                        {patient.name} ({patient.dosha}) - {patient.dietaryPreference}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {loading ? (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <Select
+                    value={chartData.patientId}
+                    onValueChange={(value) => {
+                      const patient = patients.find(p => p.id.toString() === value)
+                      setChartData({
+                        ...chartData,
+                        patientId: value,
+                        patientName: patient?.name || "",
+                        dosha: patient?.dosha || "",
+                      })
+                    }}
+                  >
+                    <SelectTrigger id="patient">
+                      <SelectValue placeholder="Choose a patient" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {patients.map((patient) => (
+                        <SelectItem key={patient.id} value={patient.id.toString()}>
+                          {patient.name} ({patient.dosha}) - {patient.dietary_habits || "N/A"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
               {selectedPatient && (
@@ -282,11 +400,11 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                       </div>
                       <div>
                         <span className="text-muted-foreground">Allergies:</span>
-                        <span className="ml-2 font-medium">{selectedPatient.allergies}</span>
+                        <span className="ml-2 font-medium">{selectedPatient.allergies || "None"}</span>
                       </div>
                       <div>
                         <span className="text-muted-foreground">Diet:</span>
-                        <span className="ml-2 font-medium">{selectedPatient.dietaryPreference}</span>
+                        <span className="ml-2 font-medium">{selectedPatient.dietary_habits || "N/A"}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -353,7 +471,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
               {/* Nutritional Summary */}
               <div className="grid grid-cols-4 gap-3">
                 <Card>
-                  <CardContent className="pt-4">
+                  <CardContent className="pt-4 pb-3">
                     <div className="text-xs text-muted-foreground">Calories</div>
                     <div className="text-lg font-bold">{Math.round(totals.calories)}</div>
                     <Progress value={(totals.calories / chartData.targetCalories) * 100} className="h-1 mt-1" />
@@ -363,7 +481,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                   </CardContent>
                 </Card>
                 <Card>
-                  <CardContent className="pt-4">
+                  <CardContent className="pt-4 pb-3">
                     <div className="text-xs text-muted-foreground">Protein</div>
                     <div className="text-lg font-bold">{Math.round(totals.protein)}g</div>
                     <div className="text-xs text-muted-foreground mt-1">
@@ -372,7 +490,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                   </CardContent>
                 </Card>
                 <Card>
-                  <CardContent className="pt-4">
+                  <CardContent className="pt-4 pb-3">
                     <div className="text-xs text-muted-foreground">Carbs</div>
                     <div className="text-lg font-bold">{Math.round(totals.carbs)}g</div>
                     <div className="text-xs text-muted-foreground mt-1">
@@ -381,7 +499,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                   </CardContent>
                 </Card>
                 <Card>
-                  <CardContent className="pt-4">
+                  <CardContent className="pt-4 pb-3">
                     <div className="text-xs text-muted-foreground">Fat</div>
                     <div className="text-lg font-bold">{Math.round(totals.fat)}g</div>
                     <div className="text-xs text-muted-foreground mt-1">
@@ -394,7 +512,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
               {/* Ayurvedic Compliance */}
               {compliance && (
                 <Card className="bg-gradient-to-br from-[var(--ayurveda-saffron)]/5 to-[var(--ayurveda-terracotta)]/5 border-[var(--ayurveda-saffron)]/20">
-                  <CardContent className="pt-4">
+                  <CardContent className="pt-4 pb-3">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <Leaf className="w-4 h-4 text-[var(--ayurveda-saffron)]" />
@@ -422,29 +540,41 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                 </Card>
               )}
 
-              <div className="grid grid-cols-3 gap-4">
-                {/* Meal Tabs */}
-                <div className="col-span-2 space-y-4">
+              <div className="grid grid-cols-12 gap-4">
+                {/* Meal Tabs - Increased space */}
+                <div className="col-span-8 space-y-4">
                   <Tabs value={selectedMeal} onValueChange={(value) => setSelectedMeal(value as keyof DietChartData["meals"])}>
-                    <TabsList className="grid grid-cols-5 w-full">
-                      <TabsTrigger value="breakfast">Breakfast</TabsTrigger>
-                      <TabsTrigger value="midMorning">Mid-Morning</TabsTrigger>
-                      <TabsTrigger value="lunch">Lunch</TabsTrigger>
-                      <TabsTrigger value="evening">Evening</TabsTrigger>
-                      <TabsTrigger value="dinner">Dinner</TabsTrigger>
-                    </TabsList>
+                    <div className="overflow-x-auto">
+                      <TabsList className="w-full inline-flex h-auto p-1 gap-1">
+                        <TabsTrigger value="breakfast" className="flex-1 min-w-[100px] px-4 py-2 text-sm whitespace-nowrap">
+                          Breakfast
+                        </TabsTrigger>
+                        <TabsTrigger value="midMorning" className="flex-1 min-w-[110px] px-4 py-2 text-sm whitespace-nowrap">
+                          Mid-Morning
+                        </TabsTrigger>
+                        <TabsTrigger value="lunch" className="flex-1 min-w-[90px] px-4 py-2 text-sm whitespace-nowrap">
+                          Lunch
+                        </TabsTrigger>
+                        <TabsTrigger value="evening" className="flex-1 min-w-[90px] px-4 py-2 text-sm whitespace-nowrap">
+                          Evening
+                        </TabsTrigger>
+                        <TabsTrigger value="dinner" className="flex-1 min-w-[90px] px-4 py-2 text-sm whitespace-nowrap">
+                          Dinner
+                        </TabsTrigger>
+                      </TabsList>
+                    </div>
 
                     {(["breakfast", "midMorning", "lunch", "evening", "dinner"] as const).map((mealType) => (
-                      <TabsContent key={mealType} value={mealType} className="space-y-3">
+                      <TabsContent key={mealType} value={mealType} className="space-y-3 mt-4">
                         {chartData.meals[mealType].length === 0 ? (
-                          <Card className="border-dashed">
-                            <CardContent className="pt-6 text-center text-muted-foreground">
+                          <Card className="border-dashed min-h-[200px] flex items-center justify-center">
+                            <CardContent className="text-center text-muted-foreground">
                               <p className="text-sm">No items added yet. Search and add foods from the right panel.</p>
                             </CardContent>
                           </Card>
                         ) : (
                           <Card>
-                            <CardContent className="pt-4 space-y-2">
+                            <CardContent className="pt-4 pb-4 space-y-3">
                               {chartData.meals[mealType].map((item, index) => {
                                 const itemNutrition = {
                                   calories: (item.food.calories * item.quantity) / 100,
@@ -454,24 +584,27 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                                 }
                                 return (
                                   <div key={index} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                                    <div className="flex-1">
+                                    <div className="flex-1 min-w-0">
                                       <div className="font-medium text-sm">{item.food.name}</div>
-                                      <div className="text-xs text-muted-foreground mt-1">
-                                        {Math.round(itemNutrition.calories)} cal | P: {Math.round(itemNutrition.protein)}g | C: {Math.round(itemNutrition.carbs)}g | F: {Math.round(itemNutrition.fat)}g
+                                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                                        <span>{Math.round(itemNutrition.calories)} cal</span>
+                                        <span>P: {Math.round(itemNutrition.protein)}g</span>
+                                        <span>C: {Math.round(itemNutrition.carbs)}g</span>
+                                        <span>F: {Math.round(itemNutrition.fat)}g</span>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-shrink-0">
                                       <Input
                                         type="number"
                                         value={item.quantity}
                                         onChange={(e) => updateFoodQuantity(mealType, index, parseInt(e.target.value) || 0)}
-                                        className="w-20 h-8 text-sm"
+                                        className="w-20 h-9 text-sm"
                                       />
-                                      <span className="text-sm text-muted-foreground">{item.unit}</span>
+                                      <span className="text-sm text-muted-foreground w-6">{item.unit}</span>
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-8 w-8"
+                                        className="h-9 w-9 flex-shrink-0"
                                         onClick={() => removeFoodFromMeal(mealType, index)}
                                       >
                                         <X className="w-4 h-4" />
@@ -480,7 +613,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                                   </div>
                                 )
                               })}
-                              <div className="pt-2 border-t">
+                              <div className="pt-3 border-t">
                                 <div className="text-sm font-medium">
                                   Meal Total: {Math.round(calculateMealNutrition(chartData.meals[mealType]).calories)} calories
                                 </div>
@@ -493,8 +626,8 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                   </Tabs>
                 </div>
 
-                {/* Food Search */}
-                <Card>
+                {/* Food Search - Reduced space */}
+                <Card className="col-span-4">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm">Add Foods</CardTitle>
                     <div className="relative mt-2">
@@ -503,12 +636,12 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                         placeholder="Search foods..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8 h-8 text-sm"
+                        className="pl-8 h-9 text-sm"
                       />
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
-                    <ScrollArea className="h-[400px]">
+                    <ScrollArea className="h-[500px]">
                       <div className="p-4 pt-0 space-y-2">
                         {filteredFoods.map((food) => (
                           <div
@@ -517,14 +650,14 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                             onClick={() => addFoodToMeal(food)}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <div className="flex-1">
+                              <div className="flex-1 min-w-0">
                                 <div className="font-medium text-sm">{food.name}</div>
                                 <div className="text-xs text-muted-foreground">{food.category}</div>
                                 <div className="text-xs text-muted-foreground mt-1">
                                   {food.calories} cal | {food.thermal} | {food.digestibility}
                                 </div>
                               </div>
-                              <Plus className="w-4 h-4 text-muted-foreground" />
+                              <Plus className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                             </div>
                           </div>
                         ))}
@@ -534,7 +667,7 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
                 </Card>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-4">
                 <Button variant="outline" onClick={() => setStep(1)}>
                   Back
                 </Button>
@@ -669,11 +802,22 @@ export function CreateDietChart({ open, onOpenChange }: { open: boolean; onOpenC
               </div>
 
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setStep(2)}>
+                <Button variant="outline" onClick={() => setStep(2)} disabled={saving}>
                   Back
                 </Button>
-                <Button className="flex-1 bg-gradient-to-r from-[var(--ayurveda-saffron)] to-[var(--ayurveda-terracotta)] text-white" onClick={handleSave}>
-                  Save Diet Chart
+                <Button 
+                  className="flex-1 bg-gradient-to-r from-[var(--ayurveda-saffron)] to-[var(--ayurveda-terracotta)] text-white" 
+                  onClick={handleSave}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Diet Chart"
+                  )}
                 </Button>
               </div>
             </div>

@@ -7,19 +7,29 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Search, Filter, MoreVertical, Phone, Mail, Calendar, Loader2 } from "lucide-react"
-import {
+import { 
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { MoreVertical, Plus, Search, Filter, Phone, Mail, Calendar, Loader2 } from "lucide-react"
 
 interface Patient {
   id: number
@@ -50,6 +60,9 @@ export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [patientToDelete, setPatientToDelete] = useState<Patient | null>(null)
+  const [deleting, setDeleting] = useState(false)
   
   // Form state
   const [formData, setFormData] = useState({
@@ -122,8 +135,14 @@ export default function PatientsPage() {
         throw new Error(error.error || "Failed to add patient")
       }
 
+      const newPatient = await response.json()
+      console.log("Patient added successfully:", newPatient)
+      
+      // Refresh the patient list FIRST
+      await fetchPatients()
+      
+      // Then close dialog and reset form
       toast.success("Patient added successfully!")
-      setIsAddPatientOpen(false)
       setFormData({
         name: "",
         age: "",
@@ -140,12 +159,44 @@ export default function PatientsPage() {
         allergies: "",
         notes: "",
       })
-      fetchPatients()
+      setIsAddPatientOpen(false)
     } catch (error: any) {
       console.error("Error adding patient:", error)
       toast.error(error.message || "Failed to add patient")
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleDeleteClick = (patient: Patient, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setPatientToDelete(patient)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!patientToDelete) return
+
+    try {
+      setDeleting(true)
+      const response = await fetch(`/api/patients/${patientToDelete.id}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to delete patient")
+      }
+
+      toast.success("Patient deleted successfully!")
+      await fetchPatients()
+      setDeleteDialogOpen(false)
+      setPatientToDelete(null)
+    } catch (error: any) {
+      console.error("Error deleting patient:", error)
+      toast.error(error.message || "Failed to delete patient")
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -464,7 +515,9 @@ export default function PatientsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem>Edit Details</DropdownMenuItem>
                             <DropdownMenuItem>Create Diet Chart</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive">Delete Patient</DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive" onClick={(e) => handleDeleteClick(patient, e)}>
+                              Delete Patient
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -510,6 +563,35 @@ export default function PatientsPage() {
           </div>
         </main>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Patient</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{patientToDelete?.name}</strong>? This action cannot be undone and will permanently delete all associated diet charts and compliance records.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete Patient"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SidebarProvider>
   )
 }
